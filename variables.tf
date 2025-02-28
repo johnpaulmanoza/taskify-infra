@@ -16,7 +16,7 @@ variable "db_password" {
 
 variable "db_name" {
   description = "Name of the database to create"
-  default     = "trello_clone"
+  default     = "taskify_db"
 }
 
 variable "db_instance_class" {
