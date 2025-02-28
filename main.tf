@@ -249,7 +249,7 @@ resource "aws_instance" "taskify_ec2" {
       cd /home/ec2-user/taskify-backend
       git pull
     else
-      git clone https://github.com/yourusername/taskify-backend.git /home/ec2-user/taskify-backend
+      git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
     fi
     
     # Set up backend
@@ -275,7 +275,7 @@ resource "aws_instance" "taskify_ec2" {
       cd /home/ec2-user/taskify-frontend
       git pull
     else
-      git clone https://github.com/yourusername/taskify-frontend.git /home/ec2-user/taskify-frontend
+      git clone https://github.com/johnpaulmanoza/taskify-frontend.git /home/ec2-user/taskify-frontend
     fi
     
     # Set up frontend
