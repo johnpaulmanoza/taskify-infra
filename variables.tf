@@ -1,6 +1,6 @@
 variable "region" {
   description = "AWS region"
-  default     = "us-east-1"
+  default     = "ap-southeast-1"
 }
 
 variable "db_username" {
@@ -26,7 +26,7 @@ variable "db_instance_class" {
 
 variable "ec2_ami" {
   description = "AMI ID for EC2 instance"
-  default     = "ami-0c02fb55956c7d316" # Amazon Linux 2 AMI in us-east-1, update for your region
+  default     = "ami-0d8eee72f13bd7a0f" # Amazon Linux 2 AMI ID
 }
 
 variable "ec2_instance_type" {
