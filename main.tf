@@ -237,6 +237,9 @@ resource "aws_instance" "taskify_ec2" {
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_cache_bypass $http_upgrade;
         }
     }
@@ -252,6 +255,9 @@ resource "aws_instance" "taskify_ec2" {
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
             proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_cache_bypass $http_upgrade;
         }
     }
@@ -282,6 +288,7 @@ resource "aws_instance" "taskify_ec2" {
     ENV
     
     # Start or restart the frontend on port 3000
+    cd /home/ec2-user/taskify-frontend
     PORT=3000 pm2 start npm --name "taskify-frontend" -- start || pm2 restart taskify-frontend
     
     # Clone or pull the backend repository
@@ -289,7 +296,7 @@ resource "aws_instance" "taskify_ec2" {
       cd /home/ec2-user/taskify-backend
       git pull
     else
-      git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
+      git clone https://github.com/yourusername/taskify-backend.git /home/ec2-user/taskify-backend
     fi
     
     # Set up backend (now on port 3001)
@@ -309,6 +316,7 @@ resource "aws_instance" "taskify_ec2" {
     ENV
     
     # Start or restart the backend on port 3001
+    cd /home/ec2-user/taskify-backend
     PORT=3001 pm2 start npm --name "taskify-backend" -- start || pm2 restart taskify-backend
     
     # Save PM2 process list
@@ -316,7 +324,7 @@ resource "aws_instance" "taskify_ec2" {
     
     # Run Certbot to obtain SSL certificates (if they don't exist)
     if [ ! -d "/etc/letsencrypt/live/taskify.jpmanoza.com" ]; then
-      sudo certbot --nginx -d taskify.jpmanoza.com -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m your-email@example.com
+      sudo certbot --nginx -d taskify.jpmanoza.com -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
     fi
     EOL
     
@@ -332,29 +340,6 @@ resource "aws_instance" "taskify_ec2" {
   }
 }
 
-# Get the hosted zone for jpmanoza.com
-data "aws_route53_zone" "jpmanoza_zone" {
-  name = "jpmanoza.com."
-}
-
-# Create Route 53 record for frontend (taskify.jpmanoza.com)
-resource "aws_route53_record" "taskify_frontend" {
-  zone_id = data.aws_route53_zone.jpmanoza_zone.zone_id
-  name    = "taskify.jpmanoza.com"
-  type    = "A"
-  ttl     = "300"
-  records = [aws_instance.taskify_ec2.public_ip]
-}
-
-# Create Route 53 record for backend (taskify-api.jpmanoza.com)
-resource "aws_route53_record" "taskify_backend" {
-  zone_id = data.aws_route53_zone.jpmanoza_zone.zone_id
-  name    = "taskify-api.jpmanoza.com"
-  type    = "A"
-  ttl     = "300"
-  records = [aws_instance.taskify_ec2.public_ip]
-}
-
 # Output the EC2 public IP and RDS endpoint
 output "ec2_public_ip" {
   value = aws_instance.taskify_ec2.public_ip
@@ -365,11 +350,15 @@ output "rds_endpoint" {
 }
 
 output "frontend_url" {
-  value = "https://taskify.jpmanoza.com"
+  value = "http://${aws_instance.taskify_ec2.public_ip}:3000 (Configure DNS: taskify.jpmanoza.com)"
 }
 
 output "backend_url" {
-  value = "https://taskify-api.jpmanoza.com"
+  value = "http://${aws_instance.taskify_ec2.public_ip}:3001 (Configure DNS: taskify-api.jpmanoza.com)"
+}
+
+output "manual_dns_instructions" {
+  value = "After deployment, manually add these DNS records in Route 53:\n1. A record: taskify.jpmanoza.com -> ${aws_instance.taskify_ec2.public_ip}\n2. A record: taskify-api.jpmanoza.com -> ${aws_instance.taskify_ec2.public_ip}"
 }
 
 output "connection_instructions" {
