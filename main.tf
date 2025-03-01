@@ -97,7 +97,7 @@ resource "aws_security_group" "taskify_ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Next.js default port
+  # Frontend app port (now 3000)
   ingress {
     from_port   = 3000
     to_port     = 3000
@@ -105,7 +105,7 @@ resource "aws_security_group" "taskify_ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Frontend app port (if different)
+  # Backend app port (now 3001)
   ingress {
     from_port   = 3001
     to_port     = 3001
@@ -184,13 +184,23 @@ resource "aws_db_instance" "taskify_db" {
   }
 }
 
-# Create an EC2 instance
+# Create an EC2 instance with increased storage
 resource "aws_instance" "taskify_ec2" {
   ami                    = var.ec2_ami # Amazon Linux 2 AMI
   instance_type          = var.ec2_instance_type
   subnet_id              = aws_subnet.taskify_public_subnet.id
   vpc_security_group_ids = [aws_security_group.taskify_ec2_sg.id]
   key_name               = var.key_pair_name
+  
+  # Add root volume with increased size (15GB)
+  root_block_device {
+    volume_size           = 15
+    volume_type           = "gp2"
+    delete_on_termination = true
+    tags = {
+      Name = "Taskify Root Volume"
+    }
+  }
   
   # User data script to install necessary software
   user_data = <<-EOF
@@ -210,14 +220,18 @@ resource "aws_instance" "taskify_ec2" {
     systemctl start nginx
     systemctl enable nginx
     
-    # Configure Nginx as a reverse proxy (basic config, customize as needed)
+    # Install Certbot for SSL certificates
+    amazon-linux-extras install epel -y
+    yum install -y certbot python3-certbot-nginx
+    
+    # Configure Nginx with virtual hosts for the subdomains
     cat > /etc/nginx/conf.d/taskify.conf << 'EOL'
+    # Frontend configuration (taskify.jpmanoza.com)
     server {
         listen 80;
-        server_name _;
+        server_name taskify.jpmanoza.com;
         
-        # Backend API (Next.js)
-        location /api {
+        location / {
             proxy_pass http://localhost:3000;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
@@ -225,8 +239,13 @@ resource "aws_instance" "taskify_ec2" {
             proxy_set_header Host $host;
             proxy_cache_bypass $http_upgrade;
         }
+    }
+    
+    # Backend configuration (taskify-api.jpmanoza.com)
+    server {
+        listen 80;
+        server_name taskify-api.jpmanoza.com;
         
-        # Frontend app
         location / {
             proxy_pass http://localhost:3001;
             proxy_http_version 1.1;
@@ -244,32 +263,6 @@ resource "aws_instance" "taskify_ec2" {
     cat > /home/ec2-user/deploy.sh << 'EOL'
     #!/bin/bash
     
-    # Clone or pull the backend repository
-    if [ -d "/home/ec2-user/taskify-backend" ]; then
-      cd /home/ec2-user/taskify-backend
-      git pull
-    else
-      git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
-    fi
-    
-    # Set up backend
-    cd /home/ec2-user/taskify-backend
-    npm install
-    npm run build
-    
-    # Update environment variables
-    cat > /home/ec2-user/taskify-backend/.env << 'ENV'
-    JWT_SECRET=${var.jwt_secret}
-    DB_HOST=${aws_db_instance.taskify_db.address}
-    DB_USER=${var.db_username}
-    DB_PASSWORD=${var.db_password}
-    DB_NAME=${var.db_name}
-    DB_PORT=3306
-    ENV
-    
-    # Start or restart the backend
-    pm2 start npm --name "taskify-backend" -- start || pm2 restart taskify-backend
-    
     # Clone or pull the frontend repository
     if [ -d "/home/ec2-user/taskify-frontend" ]; then
       cd /home/ec2-user/taskify-frontend
@@ -278,16 +271,53 @@ resource "aws_instance" "taskify_ec2" {
       git clone https://github.com/johnpaulmanoza/taskify-frontend.git /home/ec2-user/taskify-frontend
     fi
     
-    # Set up frontend
+    # Set up frontend (React app on port 3000)
     cd /home/ec2-user/taskify-frontend
     npm install
     npm run build
     
-    # Start or restart the frontend
-    pm2 start npm --name "taskify-frontend" -- start || pm2 restart taskify-frontend
+    # Create or update .env file for frontend
+    cat > /home/ec2-user/taskify-frontend/.env << 'ENV'
+    REACT_APP_API_URL=https://taskify-api.jpmanoza.com
+    ENV
+    
+    # Start or restart the frontend on port 3000
+    PORT=3000 pm2 start npm --name "taskify-frontend" -- start || pm2 restart taskify-frontend
+    
+    # Clone or pull the backend repository
+    if [ -d "/home/ec2-user/taskify-backend" ]; then
+      cd /home/ec2-user/taskify-backend
+      git pull
+    else
+      git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
+    fi
+    
+    # Set up backend (now on port 3001)
+    cd /home/ec2-user/taskify-backend
+    npm install
+    npm run build
+    
+    # Update environment variables for backend
+    cat > /home/ec2-user/taskify-backend/.env << 'ENV'
+    JWT_SECRET=${var.jwt_secret}
+    DB_HOST=${aws_db_instance.taskify_db.address}
+    DB_USER=${var.db_username}
+    DB_PASSWORD=${var.db_password}
+    DB_NAME=${var.db_name}
+    DB_PORT=3306
+    PORT=3001
+    ENV
+    
+    # Start or restart the backend on port 3001
+    PORT=3001 pm2 start npm --name "taskify-backend" -- start || pm2 restart taskify-backend
     
     # Save PM2 process list
     pm2 save
+    
+    # Run Certbot to obtain SSL certificates (if they don't exist)
+    if [ ! -d "/etc/letsencrypt/live/taskify.jpmanoza.com" ]; then
+      sudo certbot --nginx -d taskify.jpmanoza.com -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m your-email@example.com
+    fi
     EOL
     
     chmod +x /home/ec2-user/deploy.sh
@@ -302,6 +332,29 @@ resource "aws_instance" "taskify_ec2" {
   }
 }
 
+# Get the hosted zone for jpmanoza.com
+data "aws_route53_zone" "jpmanoza_zone" {
+  name = "jpmanoza.com."
+}
+
+# Create Route 53 record for frontend (taskify.jpmanoza.com)
+resource "aws_route53_record" "taskify_frontend" {
+  zone_id = data.aws_route53_zone.jpmanoza_zone.zone_id
+  name    = "taskify.jpmanoza.com"
+  type    = "A"
+  ttl     = "300"
+  records = [aws_instance.taskify_ec2.public_ip]
+}
+
+# Create Route 53 record for backend (taskify-api.jpmanoza.com)
+resource "aws_route53_record" "taskify_backend" {
+  zone_id = data.aws_route53_zone.jpmanoza_zone.zone_id
+  name    = "taskify-api.jpmanoza.com"
+  type    = "A"
+  ttl     = "300"
+  records = [aws_instance.taskify_ec2.public_ip]
+}
+
 # Output the EC2 public IP and RDS endpoint
 output "ec2_public_ip" {
   value = aws_instance.taskify_ec2.public_ip
@@ -309,6 +362,14 @@ output "ec2_public_ip" {
 
 output "rds_endpoint" {
   value = aws_db_instance.taskify_db.address
+}
+
+output "frontend_url" {
+  value = "https://taskify.jpmanoza.com"
+}
+
+output "backend_url" {
+  value = "https://taskify-api.jpmanoza.com"
 }
 
 output "connection_instructions" {

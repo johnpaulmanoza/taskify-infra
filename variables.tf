@@ -1,11 +1,11 @@
 variable "region" {
   description = "AWS region"
-  default     = "ap-southeast-1"
+  default     = "us-east-1"
 }
 
 variable "db_username" {
   description = "Database administrator username"
-  default     = "taskify_admin"
+  default     = "admin"
   sensitive   = true
 }
 
@@ -16,7 +16,7 @@ variable "db_password" {
 
 variable "db_name" {
   description = "Name of the database to create"
-  default     = "taskify_db"
+  default     = "taskify"
 }
 
 variable "db_instance_class" {
@@ -26,7 +26,7 @@ variable "db_instance_class" {
 
 variable "ec2_ami" {
   description = "AMI ID for EC2 instance"
-  default     = "ami-0d8eee72f13bd7a0f" # Amazon Linux 2 AMI ID
+  default     = "ami-0d8eee72f13bd7a0f" # Amazon Linux 2 AMI in us-east-1, update for your region
 }
 
 variable "ec2_instance_type" {
@@ -43,4 +43,24 @@ variable "jwt_secret" {
   description = "Secret key for JWT signing"
   default     = "your-secret-key-at-least-32-characters"
   sensitive   = true
+}
+
+variable "domain_name" {
+  description = "Your domain name"
+  default     = "mydomain.com"
+}
+
+variable "frontend_subdomain" {
+  description = "Subdomain for the frontend application"
+  default     = "taskify"
+}
+
+variable "backend_subdomain" {
+  description = "Subdomain for the backend API"
+  default     = "taskify-api"
+}
+
+variable "email_for_ssl" {
+  description = "Email address for SSL certificate notifications"
+  default     = "your-email@example.com"
 }

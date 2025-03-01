@@ -1,8 +1,12 @@
 region            = "us-east-1"
-db_username        = "taskify_admin"
-db_password        = "YourStrongPasswordHere"  # Change this!
-db_name            = "trello_clone"
-db_instance_class  = "db.t3.micro"
-ec2_instance_type  = "t2.micro"
-key_pair_name      = "taskify-key"  # Make sure this key pair exists in your AWS account
-jwt_secret         = "your-secret-key-at-least-32-characters"
+db_username       = "admin"
+db_password       = "YourStrongPasswordHere"=
+db_name           = "taskify"
+db_instance_class = "db.t3.micro"
+ec2_instance_type = "t2.micro"
+key_pair_name     = "key"
+jwt_secret        = "your-secret-key-at-least-32-characters"
+domain_name        = "mydomain.com"
+frontend_subdomain = "taskify"
+backend_subdomain  = "taskify-api"
+email_for_ssl      = "your-email@example.com"
