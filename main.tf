@@ -150,8 +150,16 @@ resource "aws_security_group" "taskify_backend_sg" {
 
   # Backend app port
   ingress {
-    from_port   = 3001
-    to_port     = 3001
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Docker ports
+  ingress {
+    from_port   = 2375
+    to_port     = 2375
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -360,12 +368,15 @@ resource "aws_instance" "taskify_backend_ec2" {
     yum update -y
     yum install -y git
     
-    # Install Node.js
-    curl -sL https://rpm.nodesource.com/setup_16.x | bash -
-    yum install -y nodejs
+    # Install Docker
+    amazon-linux-extras install docker -y
+    systemctl start docker
+    systemctl enable docker
+    usermod -a -G docker ec2-user
     
-    # Install PM2 for process management
-    npm install -g pm2
+    # Install Docker Compose
+    curl -L "https://github.com/docker/compose/releases/download/1.29.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    chmod +x /usr/local/bin/docker-compose
     
     # Install Nginx
     amazon-linux-extras install nginx1 -y
@@ -383,7 +394,7 @@ resource "aws_instance" "taskify_backend_ec2" {
         server_name taskify-api.jpmanoza.com;
         
         location / {
-            proxy_pass http://localhost:3001;
+            proxy_pass http://localhost:3000;
             proxy_http_version 1.1;
             proxy_set_header Upgrade $http_upgrade;
             proxy_set_header Connection 'upgrade';
@@ -398,7 +409,7 @@ resource "aws_instance" "taskify_backend_ec2" {
     
     systemctl restart nginx
     
-    # Create a deployment script for backend
+    # Create a deployment script for backend using Docker
     cat > /home/ec2-user/deploy-backend.sh << 'EOL'
     #!/bin/bash
     
@@ -410,12 +421,7 @@ resource "aws_instance" "taskify_backend_ec2" {
       git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
     fi
     
-    # Set up backend (on port 3001)
-    cd /home/ec2-user/taskify-backend
-    npm install
-    npm run build
-    
-    # Update environment variables for backend
+    # Create or update .env file for backend
     cat > /home/ec2-user/taskify-backend/.env << 'ENV'
     JWT_SECRET=${var.jwt_secret}
     DB_HOST=${aws_db_instance.taskify_db.address}
@@ -423,15 +429,17 @@ resource "aws_instance" "taskify_backend_ec2" {
     DB_PASSWORD=${var.db_password}
     DB_NAME=${var.db_name}
     DB_PORT=3306
-    PORT=3001
+    PORT=3000
     ENV
     
-    # Start or restart the backend on port 3001
+    # Navigate to the backend directory
     cd /home/ec2-user/taskify-backend
-    PORT=3001 pm2 start npm --name "taskify-backend" -- start || pm2 restart taskify-backend
     
-    # Save PM2 process list
-    pm2 save
+    # Stop any existing containers
+    docker-compose down
+    
+    # Build and start the Docker containers
+    docker-compose up -d --build
     
     # Run Certbot to obtain SSL certificates (if they don't exist)
     if [ ! -d "/etc/letsencrypt/live/taskify-api.jpmanoza.com" ]; then
@@ -440,10 +448,6 @@ resource "aws_instance" "taskify_backend_ec2" {
     EOL
     
     chmod +x /home/ec2-user/deploy-backend.sh
-    
-    # Set up PM2 to start on boot
-    pm2 startup
-    env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
   EOF
   
   tags = {
