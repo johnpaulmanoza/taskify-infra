@@ -396,14 +396,7 @@ resource "aws_instance" "taskify_backend_ec2" {
     server {
         listen 80;
         server_name taskify-api.jpmanoza.com;
-
-        root /usr/share/nginx/html;
-        index index.html;
-
-        # Gzip compression
-        gzip on;
-        gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
-
+        
         location / {
             proxy_pass http://localhost:3000;
             proxy_http_version 1.1;
@@ -414,18 +407,6 @@ resource "aws_instance" "taskify_backend_ec2" {
             proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
             proxy_set_header X-Forwarded-Proto $scheme;
             proxy_cache_bypass $http_upgrade;
-        }
-
-        # Cache static assets
-        location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
-            expires 30d;
-            add_header Cache-Control "public, no-transform";
-        }
-
-        # Don't cache HTML
-        location ~* \.html$ {
-            expires -1;
-            add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate";
         }
     }
     EOL
