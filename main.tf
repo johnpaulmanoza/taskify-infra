@@ -282,9 +282,10 @@ resource "aws_instance" "taskify_frontend_ec2" {
     systemctl start nginx
     systemctl enable nginx
     
-    # Install Certbot for SSL certificates
+    # Install Certbot and the Nginx plugin properly
     amazon-linux-extras install epel -y
-    yum install -y certbot python3-certbot-nginx
+    yum install -y certbot
+    yum install -y python3-certbot-nginx
     
     # Configure Nginx for the frontend
     cat > /etc/nginx/conf.d/taskify.conf << 'EOL'
@@ -329,14 +330,44 @@ resource "aws_instance" "taskify_frontend_ec2" {
     cd /home/ec2-user/taskify-frontend
     
     # Stop any existing containers
-    docker-compose down
+    docker-compose down || true
     
     # Build and start the Docker containers
     docker-compose up -d --build
     
-    # Run Certbot to obtain SSL certificates (if they don't exist)
+    # Use certbot in standalone mode instead of nginx plugin
     if [ ! -d "/etc/letsencrypt/live/taskify.jpmanoza.com" ]; then
-      sudo certbot --nginx -d taskify.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+      # Stop nginx temporarily to free up port 80
+      sudo systemctl stop nginx
+      
+      # Get certificate in standalone mode
+      sudo certbot certonly --standalone -d taskify.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+      
+      # Configure nginx to use the certificates
+      sudo cat > /etc/nginx/conf.d/taskify-ssl.conf << 'SSL'
+    server {
+        listen 443 ssl;
+        server_name taskify.jpmanoza.com;
+        
+        ssl_certificate /etc/letsencrypt/live/taskify.jpmanoza.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/taskify.jpmanoza.com/privkey.pem;
+        
+        location / {
+            proxy_pass http://localhost:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+    SSL
+      
+      # Start nginx again
+      sudo systemctl start nginx
     fi
     EOL
     
@@ -387,9 +418,10 @@ resource "aws_instance" "taskify_backend_ec2" {
     systemctl start nginx
     systemctl enable nginx
     
-    # Install Certbot for SSL certificates
+    # Install Certbot and the Nginx plugin properly
     amazon-linux-extras install epel -y
-    yum install -y certbot python3-certbot-nginx
+    yum install -y certbot
+    yum install -y python3-certbot-nginx
     
     # Configure Nginx for the backend
     cat > /etc/nginx/conf.d/taskify-api.conf << 'EOL'
@@ -435,19 +467,49 @@ resource "aws_instance" "taskify_backend_ec2" {
     DB_PORT=3306
     PORT=3000
     ENV
-    
+
     # Navigate to the backend directory
     cd /home/ec2-user/taskify-backend
     
     # Stop any existing containers
-    docker-compose down
+    docker-compose down || true
     
     # Build and start the Docker containers
     docker-compose up -d --build
     
-    # Run Certbot to obtain SSL certificates (if they don't exist)
+    # Use certbot in standalone mode instead of nginx plugin
     if [ ! -d "/etc/letsencrypt/live/taskify-api.jpmanoza.com" ]; then
-      sudo certbot --nginx -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+      # Stop nginx temporarily to free up port 80
+      sudo systemctl stop nginx
+      
+      # Get certificate in standalone mode
+      sudo certbot certonly --standalone -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+      
+      # Configure nginx to use the certificates
+      sudo cat > /etc/nginx/conf.d/taskify-api-ssl.conf << 'SSL'
+    server {
+        listen 443 ssl;
+        server_name taskify-api.jpmanoza.com;
+        
+        ssl_certificate /etc/letsencrypt/live/taskify-api.jpmanoza.com/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/taskify-api.jpmanoza.com/privkey.pem;
+        
+        location / {
+            proxy_pass http://localhost:3000;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+    SSL
+      
+      # Start nginx again
+      sudo systemctl start nginx
     fi
     EOL
     
