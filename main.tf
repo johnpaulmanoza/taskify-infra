@@ -67,10 +67,10 @@ resource "aws_route_table_association" "taskify_public_rta" {
   route_table_id = aws_route_table.taskify_public_rt.id
 }
 
-# Create a security group for the EC2 instance
-resource "aws_security_group" "taskify_ec2_sg" {
-  name        = "taskify-ec2-sg"
-  description = "Security group for Taskify EC2 instance"
+# Create a security group for the Frontend EC2 instance
+resource "aws_security_group" "taskify_frontend_sg" {
+  name        = "taskify-frontend-sg"
+  description = "Security group for Taskify Frontend EC2 instance"
   vpc_id      = aws_vpc.taskify_vpc.id
 
   # SSH access
@@ -97,7 +97,7 @@ resource "aws_security_group" "taskify_ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Frontend app port (now 3000)
+  # Frontend app port
   ingress {
     from_port   = 3000
     to_port     = 3000
@@ -105,7 +105,50 @@ resource "aws_security_group" "taskify_ec2_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Backend app port (now 3001)
+  # Outbound traffic
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "taskify-frontend-sg"
+  }
+}
+
+# Create a security group for the Backend EC2 instance
+resource "aws_security_group" "taskify_backend_sg" {
+  name        = "taskify-backend-sg"
+  description = "Security group for Taskify Backend EC2 instance"
+  vpc_id      = aws_vpc.taskify_vpc.id
+
+  # SSH access
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # Restrict to your IP in production
+  }
+
+  # HTTP access
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTPS access
+  ingress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Backend app port
   ingress {
     from_port   = 3001
     to_port     = 3001
@@ -122,22 +165,22 @@ resource "aws_security_group" "taskify_ec2_sg" {
   }
 
   tags = {
-    Name = "taskify-ec2-sg"
+    Name = "taskify-backend-sg"
   }
 }
 
 # Create a security group for RDS
 resource "aws_security_group" "taskify_db_sg" {
   name        = "taskify-db-sg"
-  description = "Allow MySQL access from EC2 instance only"
+  description = "Allow MySQL access from Backend EC2 instance only"
   vpc_id      = aws_vpc.taskify_vpc.id
 
-  # MySQL access from EC2 security group only
+  # MySQL access from Backend EC2 security group only
   ingress {
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
-    security_groups = [aws_security_group.taskify_ec2_sg.id]
+    security_groups = [aws_security_group.taskify_backend_sg.id]
   }
 
   # Outbound traffic
@@ -184,25 +227,25 @@ resource "aws_db_instance" "taskify_db" {
   }
 }
 
-# Create an EC2 instance with increased storage
-resource "aws_instance" "taskify_ec2" {
+# Create an EC2 instance for the Frontend
+resource "aws_instance" "taskify_frontend_ec2" {
   ami                    = var.ec2_ami # Amazon Linux 2 AMI
   instance_type          = var.ec2_instance_type
   subnet_id              = aws_subnet.taskify_public_subnet.id
-  vpc_security_group_ids = [aws_security_group.taskify_ec2_sg.id]
+  vpc_security_group_ids = [aws_security_group.taskify_frontend_sg.id]
   key_name               = var.key_pair_name
   
-  # Add root volume with increased size (15GB)
+  # Add root volume with 8GB size
   root_block_device {
-    volume_size           = 15
+    volume_size           = 8
     volume_type           = "gp2"
     delete_on_termination = true
     tags = {
-      Name = "Taskify Root Volume"
+      Name = "Taskify Frontend Root Volume"
     }
   }
   
-  # User data script to install necessary software
+  # User data script to install necessary software for Frontend
   user_data = <<-EOF
     #!/bin/bash
     yum update -y
@@ -224,9 +267,8 @@ resource "aws_instance" "taskify_ec2" {
     amazon-linux-extras install epel -y
     yum install -y certbot python3-certbot-nginx
     
-    # Configure Nginx with virtual hosts for the subdomains
+    # Configure Nginx for the frontend
     cat > /etc/nginx/conf.d/taskify.conf << 'EOL'
-    # Frontend configuration (taskify.jpmanoza.com)
     server {
         listen 80;
         server_name taskify.jpmanoza.com;
@@ -243,30 +285,12 @@ resource "aws_instance" "taskify_ec2" {
             proxy_cache_bypass $http_upgrade;
         }
     }
-    
-    # Backend configuration (taskify-api.jpmanoza.com)
-    server {
-        listen 80;
-        server_name taskify-api.jpmanoza.com;
-        
-        location / {
-            proxy_pass http://localhost:3001;
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection 'upgrade';
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_cache_bypass $http_upgrade;
-        }
-    }
     EOL
     
     systemctl restart nginx
     
-    # Create a deployment script
-    cat > /home/ec2-user/deploy.sh << 'EOL'
+    # Create a deployment script for frontend
+    cat > /home/ec2-user/deploy-frontend.sh << 'EOL'
     #!/bin/bash
     
     # Clone or pull the frontend repository
@@ -291,6 +315,93 @@ resource "aws_instance" "taskify_ec2" {
     cd /home/ec2-user/taskify-frontend
     PORT=3000 pm2 start npm --name "taskify-frontend" -- start || pm2 restart taskify-frontend
     
+    # Save PM2 process list
+    pm2 save
+    
+    # Run Certbot to obtain SSL certificates (if they don't exist)
+    if [ ! -d "/etc/letsencrypt/live/taskify.jpmanoza.com" ]; then
+      sudo certbot --nginx -d taskify.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+    fi
+    EOL
+    
+    chmod +x /home/ec2-user/deploy-frontend.sh
+    
+    # Set up PM2 to start on boot
+    pm2 startup
+    env PATH=$PATH:/usr/bin pm2 startup systemd -u ec2-user --hp /home/ec2-user
+  EOF
+  
+  tags = {
+    Name = "Taskify Frontend EC2 Instance"
+  }
+}
+
+# Create an EC2 instance for the Backend
+resource "aws_instance" "taskify_backend_ec2" {
+  ami                    = var.ec2_ami # Amazon Linux 2 AMI
+  instance_type          = var.ec2_instance_type
+  subnet_id              = aws_subnet.taskify_public_subnet.id
+  vpc_security_group_ids = [aws_security_group.taskify_backend_sg.id]
+  key_name               = var.key_pair_name
+  
+  # Add root volume with 8GB size
+  root_block_device {
+    volume_size           = 8
+    volume_type           = "gp2"
+    delete_on_termination = true
+    tags = {
+      Name = "Taskify Backend Root Volume"
+    }
+  }
+  
+  # User data script to install necessary software for Backend
+  user_data = <<-EOF
+    #!/bin/bash
+    yum update -y
+    yum install -y git
+    
+    # Install Node.js
+    curl -sL https://rpm.nodesource.com/setup_16.x | bash -
+    yum install -y nodejs
+    
+    # Install PM2 for process management
+    npm install -g pm2
+    
+    # Install Nginx
+    amazon-linux-extras install nginx1 -y
+    systemctl start nginx
+    systemctl enable nginx
+    
+    # Install Certbot for SSL certificates
+    amazon-linux-extras install epel -y
+    yum install -y certbot python3-certbot-nginx
+    
+    # Configure Nginx for the backend
+    cat > /etc/nginx/conf.d/taskify-api.conf << 'EOL'
+    server {
+        listen 80;
+        server_name taskify-api.jpmanoza.com;
+        
+        location / {
+            proxy_pass http://localhost:3001;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection 'upgrade';
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_cache_bypass $http_upgrade;
+        }
+    }
+    EOL
+    
+    systemctl restart nginx
+    
+    # Create a deployment script for backend
+    cat > /home/ec2-user/deploy-backend.sh << 'EOL'
+    #!/bin/bash
+    
     # Clone or pull the backend repository
     if [ -d "/home/ec2-user/taskify-backend" ]; then
       cd /home/ec2-user/taskify-backend
@@ -299,7 +410,7 @@ resource "aws_instance" "taskify_ec2" {
       git clone https://github.com/johnpaulmanoza/taskify-backend.git /home/ec2-user/taskify-backend
     fi
     
-    # Set up backend (now on port 3001)
+    # Set up backend (on port 3001)
     cd /home/ec2-user/taskify-backend
     npm install
     npm run build
@@ -323,12 +434,12 @@ resource "aws_instance" "taskify_ec2" {
     pm2 save
     
     # Run Certbot to obtain SSL certificates (if they don't exist)
-    if [ ! -d "/etc/letsencrypt/live/taskify.jpmanoza.com" ]; then
-      sudo certbot --nginx -d taskify.jpmanoza.com -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
+    if [ ! -d "/etc/letsencrypt/live/taskify-api.jpmanoza.com" ]; then
+      sudo certbot --nginx -d taskify-api.jpmanoza.com --non-interactive --agree-tos -m ${var.email_for_ssl}
     fi
     EOL
     
-    chmod +x /home/ec2-user/deploy.sh
+    chmod +x /home/ec2-user/deploy-backend.sh
     
     # Set up PM2 to start on boot
     pm2 startup
@@ -336,13 +447,17 @@ resource "aws_instance" "taskify_ec2" {
   EOF
   
   tags = {
-    Name = "Taskify EC2 Instance"
+    Name = "Taskify Backend EC2 Instance"
   }
 }
 
-# Output the EC2 public IP and RDS endpoint
-output "ec2_public_ip" {
-  value = aws_instance.taskify_ec2.public_ip
+# Output the EC2 public IPs and RDS endpoint
+output "frontend_ec2_public_ip" {
+  value = aws_instance.taskify_frontend_ec2.public_ip
+}
+
+output "backend_ec2_public_ip" {
+  value = aws_instance.taskify_backend_ec2.public_ip
 }
 
 output "rds_endpoint" {
@@ -350,17 +465,29 @@ output "rds_endpoint" {
 }
 
 output "frontend_url" {
-  value = "http://${aws_instance.taskify_ec2.public_ip}:3000 (Configure DNS: taskify.jpmanoza.com)"
+  value = "http://${aws_instance.taskify_frontend_ec2.public_ip} (Configure DNS: taskify.jpmanoza.com)"
 }
 
 output "backend_url" {
-  value = "http://${aws_instance.taskify_ec2.public_ip}:3001 (Configure DNS: taskify-api.jpmanoza.com)"
+  value = "http://${aws_instance.taskify_backend_ec2.public_ip} (Configure DNS: taskify-api.jpmanoza.com)"
 }
 
 output "manual_dns_instructions" {
-  value = "After deployment, manually add these DNS records in Route 53:\n1. A record: taskify.jpmanoza.com -> ${aws_instance.taskify_ec2.public_ip}\n2. A record: taskify-api.jpmanoza.com -> ${aws_instance.taskify_ec2.public_ip}"
+  value = "After deployment, manually add these DNS records in Route 53:\n1. A record: taskify.jpmanoza.com -> ${aws_instance.taskify_frontend_ec2.public_ip}\n2. A record: taskify-api.jpmanoza.com -> ${aws_instance.taskify_backend_ec2.public_ip}"
 }
 
-output "connection_instructions" {
-  value = "Connect to your EC2 instance: ssh -i ${var.key_pair_name}.pem ec2-user@${aws_instance.taskify_ec2.public_ip}"
+output "frontend_connection_instructions" {
+  value = "Connect to your Frontend EC2 instance: ssh -i ${var.key_pair_name}.pem ec2-user@${aws_instance.taskify_frontend_ec2.public_ip}"
+}
+
+output "backend_connection_instructions" {
+  value = "Connect to your Backend EC2 instance: ssh -i ${var.key_pair_name}.pem ec2-user@${aws_instance.taskify_backend_ec2.public_ip}"
+}
+
+output "frontend_deployment_instructions" {
+  value = "To deploy the frontend: ssh -i ${var.key_pair_name}.pem ec2-user@${aws_instance.taskify_frontend_ec2.public_ip} 'sudo /home/ec2-user/deploy-frontend.sh'"
+}
+
+output "backend_deployment_instructions" {
+  value = "To deploy the backend: ssh -i ${var.key_pair_name}.pem ec2-user@${aws_instance.taskify_backend_ec2.public_ip} 'sudo /home/ec2-user/deploy-backend.sh'"
 }
